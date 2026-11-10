@@ -7,20 +7,23 @@ Tasks and history will stay on your machine, without accounts or a server.
 
 ## What works today
 
-This repository is deliberately a starter, not a working timer:
+The Ruby core is implemented, while the interactive timer is still a learning exercise:
 
 - Command help works.
 - `start` and `status` print a clear “not implemented” message and exit with code 1.
-- The duration parser is an exercise stub, with three skipped tests to guide you.
+- `Timebox::Duration.parse` converts durations such as `"25m"` and `"1h"` to seconds.
+- `Timebox::FocusBlock` stores a task, duration, start time, and calculated deadline.
+  Its `expired?(now:)` method checks whether the deadline has been reached.
+- Minitest covers parsing, input validation, and the exact deadline boundary.
 
-Nothing starts a timer, saves data, installs a background process, or sends notifications yet.
+The core objects exist only in memory. The CLI does not use them yet, and nothing
+saves data, installs a background process, or sends notifications.
 The roadmap below summarizes the supplied project plan; it describes future work.
 
 ## Run it
 
-You need Ruby. The exercise tests also need Minitest, which is already available
-with the Ruby installation on the machine used to create this scaffold.
-There are no new gems to install for this starter.
+You need Ruby and Minitest. Minitest is already available with the Ruby
+installation used for this project; no new dependencies have been added.
 
 From the repository root:
 
@@ -32,14 +35,18 @@ ruby bin/timebox --help
 The executable also supports `./bin/timebox --help`. The shorter `timebox` command
 will need installation or a PATH change later.
 
-Run the exercise tests:
+Run all tests:
+
+```sh
+ruby -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require File.expand_path(file) }'
+```
+
+The command finds and loads every test file. All tests should pass with no skips.
+To run just the parser tests:
 
 ```sh
 ruby -Itest test/duration_test.rb
 ```
-
-At first, expect **three skips and zero assertions**. This means the exercises
-have not been enabled; it does not mean the parser is implemented.
 
 ## Find your way around
 
@@ -47,9 +54,11 @@ have not been enabled; it does not mean the parser is implemented.
 bin/timebox                 Executable: loads the library and returns an exit code
 lib/timebox.rb              Loads the project files
 lib/timebox/cli.rb          Help text and command routing
-lib/timebox/duration.rb     Your first implementation exercise
+lib/timebox/duration.rb     Converts duration strings to seconds
+lib/timebox/focus_block.rb  Validates block attributes and calculates deadlines
 test/test_helper.rb         Loads Minitest and the project
-test/duration_test.rb       Skipped examples to enable as you learn
+test/duration_test.rb       Parsing and invalid-input tests
+test/focus_block_test.rb    Block attributes, validation, and expiration tests
 ```
 
 `Timebox` is a Ruby module that groups the project's classes. In
@@ -57,33 +66,50 @@ test/duration_test.rb       Skipped examples to enable as you learn
 `Timebox::Duration.parse("25m")`. `require_relative` loads another file relative
 to the current file, so the starter needs no package installation.
 
-## First exercise: parse a duration
+## Try the Ruby core
 
-Open `lib/timebox/duration.rb` and replace the `NotImplementedError` with your code.
+The duration parser accepts a positive whole number followed by lowercase `m`
+(minutes) or `h` (hours) and returns seconds. Invalid input raises `ArgumentError`,
+including non-string values, zero, negative numbers, decimals, extra whitespace,
+and combined units such as `"1h30m"`.
 
-Keep the first version small:
-
-- Accept a positive whole number followed by `m` or `h`.
-- Return seconds: `"25m"` becomes `1500`, and `"1h"` becomes `3600`.
-- Raise `ArgumentError` for invalid input, including zero or negative durations.
-- Leave combined units, decimals, and extra whitespace for another iteration.
-
-In `test/duration_test.rb`, remove the `skip` line from the minutes test first.
-Run it, make it pass, then enable the next test. The parser intentionally has no
-solution supplied.
-
-To try your parser directly after implementing it:
+Try it from the terminal:
 
 ```sh
 ruby -Ilib -rtimebox -e 'puts Timebox::Duration.parse("25m")'
 ```
 
+This prints `1500`. The flags add `lib` to Ruby's library search path, load
+`timebox`, and execute the expression after `-e`.
+
+With the library loaded, a focus block can be used like this:
+
+```ruby
+started_at = Time.utc(2026, 11, 10, 14, 0, 0)
+block = Timebox::FocusBlock.new(
+  task: "Learn Ruby",
+  duration_seconds: Timebox::Duration.parse("25m"),
+  started_at: started_at
+)
+
+block.ends_at                              # 2026-11-10 14:25:00 UTC
+block.expired?(now: started_at)             # false
+block.expired?(now: block.ends_at)          # true
+```
+
+The task must be a nonblank string, the duration a positive integer number of
+seconds, and the start time a Ruby `Time`. Invalid attributes raise `ArgumentError`.
+If omitted, `started_at` defaults to the current time. Calling `expired?` without
+`now:` also uses the current time. Supplying explicit times keeps tests predictable.
+This method only compares times; it does not wait, change a block's state, or send
+a notification.
+
 ## Build in small steps
 
-1. **Ruby core:** Finish the parser. Add a plain Ruby focus-block class with a task,
-   start time, and deadline. Write `expired?(now:)` yourself and test the exact
-   deadline boundary. Then connect a basic interactive `start` flow. Decide how
-   `status` will work across separate CLI invocations when you add persistence.
+1. **Interactive CLI (next):** Connect `start` to the parser and focus-block class.
+   Ask for a task and duration, then display the deadline. Decide how to handle
+   invalid input. Each CLI invocation is a separate process; cross-invocation
+   `status` needs persistence in the next step.
 2. **Persistence:** Add SQLite through the `sqlite3` gem. Create tasks and time
    blocks, store UTC timestamps, and practice parameterized SQL. Verify that data
    survives closing and reopening the CLI.

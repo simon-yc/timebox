@@ -12,7 +12,7 @@ module Timebox
         start    Start a focus block (not implemented yet)
         status   Show the current block (not implemented yet)
 
-      First exercise: implement Timebox::Duration.parse.
+      Next exercise: connect start to Duration and FocusBlock.
       See README.md for the roadmap and test instructions.
     TEXT
 
