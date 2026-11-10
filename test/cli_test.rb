@@ -8,17 +8,36 @@ class CLITest < Minitest::Test
   EXECUTABLE = File.expand_path("../bin/timebox", __dir__)
 
   def test_start_accepts_minutes_and_displays_summary
-    output, error, status = run_start("Learn Ruby\n25m\n")
+    output, error, status = run_start("Learn Ruby\n25m\n\n")
 
     assert_equal 0, status.exitstatus
     assert_empty error
     assert_includes output, "What are you working on?"
     assert_includes output, "How long?"
+    assert_includes output, "Notes (optional):"
     assert_includes output, "Focus block created!"
     assert_includes output, "Task: Learn Ruby\n"
     assert_includes output, "Duration: 25 minutes\n"
     assert_match(/^Started: \d{2}:\d{2} [AP]M$/, output)
     assert_match(/^Ends: \d{2}:\d{2} [AP]M$/, output)
+    refute_match(/^Notes:/, output)
+  end
+
+  def test_start_accepts_notes
+    output, error, status = run_start("Learn Ruby\n25m\nReview keyword arguments\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_includes output, "Notes: Review keyword arguments\n"
+  end
+
+  def test_start_allows_eof_before_optional_notes
+    output, error, status = run_start("Learn Ruby\n25m\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_includes output, "Focus block created!"
+    refute_match(/^Notes:/, output)
   end
 
   def test_start_accepts_hours
@@ -30,12 +49,13 @@ class CLITest < Minitest::Test
   end
 
   def test_start_trims_outer_whitespace
-    output, error, status = run_start("  Learn Ruby  \n  25m  \n")
+    output, error, status = run_start("  Learn Ruby  \n  25m  \n  Practice accessors  \n")
 
     assert_equal 0, status.exitstatus
     assert_empty error
     assert_includes output, "Task: Learn Ruby\n"
     assert_includes output, "Duration: 25 minutes\n"
+    assert_includes output, "Notes: Practice accessors\n"
   end
 
   def test_start_rejects_invalid_duration

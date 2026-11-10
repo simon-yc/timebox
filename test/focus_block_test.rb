@@ -25,6 +25,38 @@ class FocusBlockTest < Minitest::Test
     assert_equal expected, @block.ends_at
   end
 
+  def test_defaults_to_empty_notes
+    assert_equal "", @block.notes
+  end
+
+  def test_stores_provided_notes
+    block = Timebox::FocusBlock.new(
+      task: "Learn Ruby",
+      duration_seconds: 1500,
+      notes: "Review keyword arguments"
+    )
+
+    assert_equal "Review keyword arguments", block.notes
+  end
+
+  def test_allows_modifying_notes
+    @block.notes = "Practice accessors"
+
+    assert_equal "Practice accessors", @block.notes
+
+    @block.notes = ""
+
+    assert_equal "", @block.notes
+  end
+
+  def test_rejects_non_string_notes
+    [nil, 25, []].each do |notes|
+      assert_raises(ArgumentError, "Expected notes #{notes.inspect} to be rejected") do
+        Timebox::FocusBlock.new(task: "Learn Ruby", duration_seconds: 1500, notes: notes)
+      end
+    end
+  end
+
   def test_not_expired_before_deadline
     refute @block.expired?(now: @block.ends_at - 1)
   end

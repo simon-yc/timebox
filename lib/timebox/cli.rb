@@ -40,13 +40,18 @@ module Timebox
 
       seconds = Duration.parse(duration)
 
+      print "Notes (optional): "
+      notes = $stdin.gets&.strip || ""
+
       block = FocusBlock.new(
         task: task,
-        duration_seconds: seconds
+        duration_seconds: seconds,
+        notes: notes
       )
 
       puts "\nFocus block created!"
       puts "Task: #{block.task}"
+      puts "Notes: #{block.notes}" unless block.notes.empty?
       puts "Duration: #{block.duration_seconds / 60} minutes"
       puts "Started: #{block.started_at.strftime('%I:%M %p')}"
       puts "Ends: #{block.ends_at.strftime('%I:%M %p')}"
