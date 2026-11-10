@@ -9,14 +9,10 @@ module Timebox
 
       Commands:
         help     Show this help
-        start    Start a focus block (not implemented yet)
-        status   Show the current block (not implemented yet)
-
-      Next exercise: connect start to Duration and FocusBlock.
-      See README.md for the roadmap and test instructions.
+        start    Create a focus block
+        status   Show the current block (not implemented)
     TEXT
 
-    # Return a process exit code: 0 for success, 1 for an error or unfinished command.
     def self.run(arguments)
       command = arguments.first
 
@@ -24,13 +20,41 @@ module Timebox
       when nil, "help", "--help", "-h"
         puts HELP
         0
-      when "start", "status"
-        warn "#{command} is not implemented yet. See README.md for the next steps."
+      when "start"
+        start
+      when "status"
+        warn "Status is not implemented yet."
         1
       else
-        warn "Unknown command: #{command}. Run ruby bin/timebox --help for usage."
+        warn "Unknown command: #{command}"
         1
       end
+    end
+
+    def self.start
+      print "What are you working on? "
+      task = $stdin.gets&.strip
+
+      print "How long? (e.g. 25m, 1h) "
+      duration = $stdin.gets&.strip
+
+      seconds = Duration.parse(duration)
+
+      block = FocusBlock.new(
+        task: task,
+        duration_seconds: seconds
+      )
+
+      puts "\nFocus block created!"
+      puts "Task: #{block.task}"
+      puts "Duration: #{block.duration_seconds / 60} minutes"
+      puts "Started: #{block.started_at.strftime('%I:%M %p')}"
+      puts "Ends: #{block.ends_at.strftime('%I:%M %p')}"
+
+      0
+    rescue ArgumentError => e
+      warn "Error: #{e.message}"
+      1
     end
   end
 end

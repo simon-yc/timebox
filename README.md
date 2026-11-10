@@ -7,17 +7,23 @@ Tasks and history will stay on your machine, without accounts or a server.
 
 ## What works today
 
-The Ruby core is implemented, while the interactive timer is still a learning exercise:
+The Ruby core and interactive `start` command are implemented:
 
 - Command help works.
-- `start` and `status` print a clear “not implemented” message and exit with code 1.
+- `start` asks for a task and duration, creates a focus block, and displays its
+  task, duration, start time, and deadline.
+- Invalid input prints an error and exits with code 1; a successful start exits
+  with code 0.
+- `status` prints a “not implemented” message and exits with code 1.
 - `Timebox::Duration.parse` converts durations such as `"25m"` and `"1h"` to seconds.
 - `Timebox::FocusBlock` stores a task, duration, start time, and calculated deadline.
   Its `expired?(now:)` method checks whether the deadline has been reached.
-- Minitest covers parsing, input validation, and the exact deadline boundary.
+- Minitest covers parsing, input validation, the exact deadline boundary, and the
+  interactive command through the executable.
 
-The core objects exist only in memory. The CLI does not use them yet, and nothing
-saves data, installs a background process, or sends notifications.
+The `start` command prints its summary and exits. Its block exists only in memory
+while the command runs. Persistence, background deadline checks, and notifications
+are future work.
 The roadmap below summarizes the supplied project plan; it describes future work.
 
 ## Run it
@@ -31,6 +37,16 @@ From the repository root:
 ruby --version
 ruby bin/timebox --help
 ```
+
+Create a focus block interactively:
+
+```sh
+ruby bin/timebox start
+```
+
+Enter a task name and a duration such as `25m` or `1h` when prompted. The CLI trims
+outer whitespace from both inputs. Invalid input ends the command with an error;
+it does not prompt again yet.
 
 The executable also supports `./bin/timebox --help`. The shorter `timebox` command
 will need installation or a PATH change later.
@@ -53,10 +69,11 @@ ruby -Itest test/duration_test.rb
 ```text
 bin/timebox                 Executable: loads the library and returns an exit code
 lib/timebox.rb              Loads the project files
-lib/timebox/cli.rb          Help text and command routing
+lib/timebox/cli.rb          Help, command routing, and interactive start prompts
 lib/timebox/duration.rb     Converts duration strings to seconds
 lib/timebox/focus_block.rb  Validates block attributes and calculates deadlines
 test/test_helper.rb         Loads Minitest and the project
+test/cli_test.rb            Start prompts, output, errors, and process exit codes
 test/duration_test.rb       Parsing and invalid-input tests
 test/focus_block_test.rb    Block attributes, validation, and expiration tests
 ```
@@ -106,19 +123,17 @@ a notification.
 
 ## Build in small steps
 
-1. **Interactive CLI (next):** Connect `start` to the parser and focus-block class.
-   Ask for a task and duration, then display the deadline. Decide how to handle
-   invalid input. Each CLI invocation is a separate process; cross-invocation
-   `status` needs persistence in the next step.
-2. **Persistence:** Add SQLite through the `sqlite3` gem. Create tasks and time
-   blocks, store UTC timestamps, and practice parameterized SQL. Verify that data
-   survives closing and reopening the CLI.
-3. **Check-ins:** Add `stop` and `checkin`. Record what actually happened and let
+1. **Persistence (next):** Each CLI invocation is a separate process, so saved
+   blocks are needed for `status` to work across invocations. Add SQLite through
+   the `sqlite3` gem. Create tasks and time blocks, store UTC timestamps, and
+   practice parameterized SQL. Verify that data survives closing and reopening
+   the CLI.
+2. **Check-ins:** Add `stop` and `checkin`. Record what actually happened and let
    the user continue, switch tasks, take a break, or finish.
-4. **Background reminders:** Add a user-level macOS LaunchAgent and a deadline
+3. **Background reminders:** Add a user-level macOS LaunchAgent and a deadline
    checker. Handle overdue blocks after sleep or restart and avoid duplicate
    notifications. Test the macOS integration separately.
-5. **Reflection:** Add `review` and `stats`, using confirmed activity. Practice a
+4. **Reflection:** Add `review` and `stats`, using confirmed activity. Practice a
    SQL query that totals confirmed focus minutes for a selected day.
 
 Keep domain rules in Ruby classes, terminal interaction in the CLI, and future
