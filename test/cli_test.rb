@@ -8,7 +8,7 @@ require "tmpdir"
 require "timeout"
 
 class CLITest < Minitest::Test
-  EXECUTABLE = File.expand_path("../bin/timebox", __dir__)
+  EXECUTABLE = File.expand_path("support/command_runner.rb", __dir__)
 
   def setup
     @directory = Dir.mktmpdir("timebox-cli-test-")
@@ -216,6 +216,27 @@ class CLITest < Minitest::Test
     assert_equal 0, status.exitstatus
     assert_empty error
     assert_includes output, "status   Show the saved block and time remaining"
+    assert_includes output, "Usage: bundle exec ruby bin/timebox [command]"
+  end
+
+  def test_extra_arguments_are_rejected_before_opening_the_database
+    ["start", "status", "stop", "checkin", "help"].each do |command|
+      output, error, status = Open3.capture3(
+        { "TIMEBOX_DB" => @path }, RbConfig.ruby, EXECUTABLE, command, "--help",
+        stdin_data: "Task\n25m\n\ncompleted\n\nfinish\n"
+      )
+
+      assert_equal 1, status.exitstatus
+      assert_includes error, "Unexpected arguments"
+      assert_includes error, "Usage: bundle exec ruby bin/timebox [command]"
+      assert_empty output
+      refute File.exist?(@path)
+    end
+  end
+
+  def test_start_rejects_a_duration_too_large_to_store
+    assert_start_rejected("Task\n999999999999999999999999999999m\n\n", "outside the supported range")
+    assert_equal "No active focus block.\n", run_cli("status").first
   end
 
   def test_database_directory_errors_are_reported_without_a_backtrace
@@ -476,7 +497,7 @@ class CLITest < Minitest::Test
 
   private
 
-  # Run the executable so these tests also cover argument handling and exit codes.
+  # Isolate each command in a process while the dedicated timer tests cover waiting.
   def run_start(input)
     run_cli("start", input: input)
   end

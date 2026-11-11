@@ -99,6 +99,68 @@ class StorageTest < Minitest::Test
     assert_equal "", @storage.current_block["notes"]
   end
 
+  def test_preserves_integer_values_at_sqlite_boundaries
+    [[0, (2**63) - 1], [-(2**63), 60]].each do |start, duration|
+      block = Timebox::FocusBlock.new(
+        task: "Boundary", started_at: Time.at(start), duration_seconds: duration
+      )
+      id = @storage.save(block)
+      saved = @storage.current_block
+
+      assert_equal start, saved["started_at"]
+      assert_equal duration, saved["duration_seconds"]
+      assert_equal start + duration, saved["ends_at"]
+      %w[started_at duration_seconds ends_at].each do |field|
+        assert_instance_of Integer, saved[field]
+      end
+      @storage.resolve(id: id, outcome: "completed")
+    end
+  end
+
+  def test_rejects_values_outside_sqlite_integer_range_before_inserting
+    [[0, 2**63], [(2**63) - 1, 1], [2**63, 1], [-(2**63) - 1, 60]].each do |start, duration|
+      block = Timebox::FocusBlock.new(
+        task: "Too large", started_at: Time.at(start), duration_seconds: duration
+      )
+
+      assert_raises(ArgumentError) { @storage.save(block) }
+      assert_nil @storage.current_block
+    end
+  end
+
+  def test_checkin_yields_its_successor_id_only_after_commit
+    id = @storage.save(@block)
+    successor = Timebox::FocusBlock.new(task: "Next", duration_seconds: 60)
+    yielded = []
+
+    resolved = @storage.checkin(
+      id: id, outcome: "completed", next_block: successor, now: @block.ends_at
+    ) do |next_id|
+      yielded << next_id
+      # A separate connection must already see the committed successor.
+      assert_equal "Next", read_block(next_id)["task"]
+    end
+    assert resolved
+    assert_equal [@storage.current_block["id"]], yielded
+  end
+
+  def test_checkin_does_not_yield_when_no_successor_is_committed
+    id = @storage.save(@block)
+    yielded = []
+    on_saved = ->(next_id) { yielded << next_id }
+    oversized = Timebox::FocusBlock.new(task: "Too large", duration_seconds: 2**63)
+
+    assert_raises(ArgumentError) do
+      @storage.checkin(
+        id: id, outcome: "completed", next_block: oversized, now: @block.ends_at, &on_saved
+      )
+    end
+    assert_equal id, @storage.current_block["id"]
+    refute @storage.checkin(id: id, outcome: "completed", now: @block.ends_at - 1, &on_saved)
+    assert @storage.checkin(id: id, outcome: "completed", now: @block.ends_at, &on_saved)
+    assert_empty yielded
+  end
+
   def test_rejects_second_active_block_from_another_connection
     id = @storage.save(@block)
     other = Timebox::Storage.new(path: @path)

@@ -3,4 +3,6 @@
 require_relative "timebox/duration"
 require_relative "timebox/focus_block"
 require_relative "timebox/storage"
+require_relative "timebox/notifier"
+require_relative "timebox/timer"
 require_relative "timebox/cli"

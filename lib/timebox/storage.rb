@@ -6,6 +6,7 @@ require "fileutils"
 module Timebox
   class Storage
     OUTCOMES = ["completed", "partial", "incomplete"].freeze
+    SQLITE_INTEGER_RANGE = (-(2**63)...2**63).freeze
 
     DEFAULT_PATH = File.join(
       Dir.home, ".local", "share", "timebox", "timebox.sqlite3"
@@ -16,10 +17,8 @@ module Timebox
         raise SQLite3::CantOpenException, "Database path is empty. Set TIMEBOX_DB to a path or unset it."
       end
 
-      # Create the database directory if necessary.
       FileUtils.mkdir_p(File.dirname(path))
 
-      # Open the SQLite database.
       @db = SQLite3::Database.new(path)
       @db.results_as_hash = true
       @db.busy_timeout = 5_000
@@ -53,19 +52,18 @@ module Timebox
 
     # Save a FocusBlock and return its database ID.
     def save(block)
+      time_values = [block.duration_seconds, block.started_at.to_i, block.ends_at.to_i]
+      unless time_values.all? { |value| SQLITE_INTEGER_RANGE.cover?(value) }
+        raise ArgumentError, "Duration or timestamps are outside the supported range"
+      end
+
       sql = <<~SQL
         INSERT INTO time_blocks
           (task, notes, duration_seconds, started_at, ends_at, status)
         VALUES (?, ?, ?, ?, ?, 'active')
       SQL
 
-      values = [
-        block.task,
-        block.notes,
-        block.duration_seconds,
-        block.started_at.to_i,
-        block.ends_at.to_i
-      ]
+      values = [block.task, block.notes, *time_values]
 
       @db.execute(sql, values)
       @db.last_insert_row_id
@@ -99,6 +97,7 @@ module Timebox
     end
 
     # Resolve a due block and optionally save its successor as one transaction.
+    # Yield the successor's ID only after commit; return whether resolution succeeded.
     def checkin(id:, outcome:, notes: nil, next_block: nil, now: Time.now)
       validate_resolution(outcome: outcome, notes: notes)
       unless next_block.nil? || next_block.is_a?(FocusBlock)
@@ -114,16 +113,16 @@ module Timebox
         resolved = false
         if due
           resolved = resolve(id: id, outcome: outcome, notes: notes)
-          save(next_block) if resolved && next_block
+          next_id = save(next_block) if resolved && next_block
         end
         @db.commit
+        yield next_id if next_id && block_given?
         resolved
       ensure
         @db.rollback if @db.transaction_active?
       end
     end
 
-    # Close the database connection.
     def close
       @db.close unless @db.closed?
     end

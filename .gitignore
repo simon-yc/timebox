@@ -1,6 +1,6 @@
 .DS_Store
 
-# Keep future local SQLite data out of Git, including journal/WAL sidecars.
+# Keep local SQLite data out of Git, including journal/WAL sidecars.
 *.db
 *.db-*
 *.sqlite

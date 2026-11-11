@@ -8,7 +8,7 @@ require "timeout"
 require "tmpdir"
 
 class CheckinTest < Minitest::Test
-  EXECUTABLE = File.expand_path("../bin/timebox", __dir__)
+  EXECUTABLE = File.expand_path("support/command_runner.rb", __dir__)
 
   def setup
     @directory = Dir.mktmpdir("timebox-checkin-test-")
@@ -162,7 +162,8 @@ class CheckinTest < Minitest::Test
     invalid_inputs = [
       "", "done\n", "completed\n\n", "completed\n\nlater\n",
       "completed\n\ncontinue\n", "completed\n\ncontinue\n0m\n",
-      "completed\n\nswitch\n", "completed\n\nswitch\n \n25m\n\n"
+      "completed\n\nswitch\n", "completed\n\nswitch\n \n25m\n\n",
+      "partial\nUpdated notes\ncontinue\n999999999999999999999999999999m\n"
     ]
 
     invalid_inputs.each do |input|

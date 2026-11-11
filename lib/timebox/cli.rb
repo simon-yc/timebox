@@ -5,11 +5,11 @@ module Timebox
     HELP = <<~TEXT
       Timebox — a Ruby learning project
 
-      Usage: ruby bin/timebox [command]
+      Usage: bundle exec ruby bin/timebox [command]
 
       Commands:
         help     Show this help
-        start    Create and save a focus block
+        start    Save a focus block and run its countdown
         status   Show the saved block and time remaining
         stop     Resolve the active block with an outcome
         checkin  Resolve a due block and choose what comes next
@@ -17,31 +17,48 @@ module Timebox
 
     ACTIVE_BLOCK_ERROR = "A focus block is already active. Run the status command to view it."
 
-    def self.run(arguments)
-      command = arguments.first
-
-      case command
-      when nil, "help", "--help", "-h"
-        puts HELP
-        0
-      when "start"
-        start
-      when "status"
-        status
-      when "stop"
-        stop
-      when "checkin"
-        checkin
-      else
-        warn "Unknown command: #{command}"
-        1
+    def self.run(arguments, timer: nil, clock: -> { Time.now })
+      if arguments.length > 1
+        warn "Error: Unexpected arguments. Usage: bundle exec ruby bin/timebox [command]"
+        return 1
       end
+
+      timer ||= Timer.new(clock: clock)
+      command = arguments.first
+      next_id = nil
+
+      result =
+        case command
+        when nil, "help", "--help", "-h"
+          puts HELP
+          0
+        when "start"
+          start(clock: clock) { |id| next_id = id }
+        when "status"
+          status(now: clock.call)
+        when "stop"
+          stop
+        when "checkin"
+          checkin(now: clock.call, clock: clock) { |id| next_id = id }
+        else
+          warn "Unknown command: #{command}"
+          1
+        end
+      if result.zero? && next_id
+        run_timer(timer, id: next_id, clock: clock)
+      else
+        result
+      end
+    rescue Interrupt
+      puts "\nInterrupted. Any unresolved session is still saved; use status, stop, or checkin later."
+      130
     rescue SQLite3::Exception, SystemCallError => error
       warn "Error: Could not access the database: #{error.message}"
       1
     end
 
-    def self.start
+    # Yield the saved ID to the timer while keeping the return value an exit code.
+    def self.start(clock: -> { Time.now })
       storage = Storage.new
 
       if storage.current_block
@@ -63,14 +80,16 @@ module Timebox
       block = FocusBlock.new(
         task: task,
         duration_seconds: seconds,
+        started_at: clock.call,
         notes: notes
       )
-      storage.save(block)
+      id = storage.save(block)
 
       puts "\nFocus block created!"
       print_block(block)
-      puts "Saved locally. Use the status command to view this block."
+      puts "Saved locally. Keep this terminal open for notifications; Ctrl+C leaves the block saved."
 
+      yield id if block_given?
       0
     rescue SQLite3::ConstraintException
       # The unique index also protects against two processes starting at once.
@@ -136,13 +155,17 @@ module Timebox
       storage&.close
     end
 
-    def self.checkin(now: Time.now)
+    def self.checkin(now: Time.now, clock: -> { Time.now }, expected_id: nil)
       storage = Storage.new
       block = storage.current_block
 
       unless block
         puts "No active focus block."
         return 0
+      end
+      if expected_id && block["id"] != expected_id
+        warn "Error: This focus block is no longer active. Run status to view the current block."
+        return 1
       end
       if block["ends_at"] > now.to_i
         warn "Error: This block is still running. Use stop to end it early."
@@ -151,11 +174,13 @@ module Timebox
 
       puts "Checking in: #{block['task']}"
       outcome, notes = prompt_resolution
-      next_block = prompt_next_block(block, notes: notes)
+      next_block = prompt_next_block(block, notes: notes, clock: clock)
 
-      unless storage.checkin(
+      next_id = nil
+      resolved = storage.checkin(
         id: block["id"], outcome: outcome, notes: notes, next_block: next_block, now: now
-      )
+      ) { |id| next_id = id }
+      unless resolved
         warn "Error: This focus block is no longer active. Run status to view the current block."
         return 1
       end
@@ -167,6 +192,7 @@ module Timebox
       else
         puts "Finished. No active block."
       end
+      yield next_id if next_id && block_given?
       0
     rescue ArgumentError => error
       warn "Error: #{error.message}"
@@ -202,7 +228,7 @@ module Timebox
       puts "Notes: #{notes}" unless notes.empty?
     end
 
-    def self.prompt_next_block(block, notes:)
+    def self.prompt_next_block(block, notes:, clock:)
       puts "1. continue — Same task, new block."
       puts "2. switch — Another task."
       puts "3. break — A timed break."
@@ -229,7 +255,25 @@ module Timebox
         next_notes = $stdin.gets&.strip || ""
       end
 
-      FocusBlock.new(task: task, duration_seconds: seconds, notes: next_notes)
+      FocusBlock.new(task: task, duration_seconds: seconds, started_at: clock.call, notes: next_notes)
+    end
+
+    def self.run_timer(timer, id:, clock:)
+      storage = Storage.new
+      while id
+        return 0 unless timer.wait(storage: storage, id: id)
+
+        next_id = nil
+        result = checkin(now: clock.call, clock: clock, expected_id: id) do |saved_id|
+          next_id = saved_id
+        end
+        return result unless result.zero?
+
+        id = next_id
+      end
+      0
+    ensure
+      storage&.close
     end
 
     def self.print_block(block)
@@ -240,6 +284,6 @@ module Timebox
       puts "Ends: #{block.ends_at.strftime('%I:%M %p')}"
     end
 
-    private_class_method :prompt_resolution, :print_resolution, :prompt_next_block, :print_block
+    private_class_method :prompt_resolution, :print_resolution, :prompt_next_block, :print_block, :run_timer
   end
 end
