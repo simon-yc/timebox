@@ -24,6 +24,7 @@ Use `bundle exec` to run commands with those versions.
 bundle exec ruby bin/timebox start
 bundle exec ruby bin/timebox status
 bundle exec ruby bin/timebox stop
+bundle exec ruby bin/timebox checkin
 ```
 
 - **start:** Ask for a task, duration (`25m` or `1h`), and optional notes. Save the
@@ -34,6 +35,27 @@ bundle exec ruby bin/timebox stop
 - **stop:** Select an outcome by name or number, then optionally replace notes.
   Press Enter at the notes prompt to keep existing notes. Resolving the block
   allows a new one to start, including after an overdue block.
+- **checkin:** After the deadline, select an outcome, optionally update notes, and
+  choose what comes next. Before the deadline, use `stop` to resolve a block early.
+
+Check-in actions accept a name or number:
+
+| Choice | Action | What happens |
+| --- | --- | --- |
+| 1 | `continue` | Same task and updated/current notes, with a new duration. |
+| 2 | `switch` | Ask for another task, duration, and its own optional notes. |
+| 3 | `break` | Ask for a duration and start a block named `Break` with empty notes. |
+| 4 | `finish` | Resolve the current block without starting another. |
+
+Every continuation, switch, or break creates a separate block starting when you
+answer the prompts. The previous block's planned times remain unchanged. Timed
+breaks use the same block structure and are identified by the task name `Break`.
+There are no background notifications yet; run `status` or `checkin` yourself.
+
+All required check-in input is validated before saving. The outcome, optional
+notes update, and any next block are committed together in one transaction. Bad
+input, EOF before a required answer, a failed database write, or a stale check-in
+cannot leave the previous block partly resolved or overwrite a newer session.
 
 Outcomes are exactly:
 
@@ -44,14 +66,14 @@ Outcomes are exactly:
 | 3 | `incomplete` | Made little or no meaningful progress. |
 
 Status and outcome are separate: a new block is `active` with a `NULL` outcome;
-`stop` changes it to `resolved` with one of the three outcomes. The planned
-`started_at`, `ends_at`, and `duration_seconds` values never change when stopping.
+`stop` or `checkin` changes it to `resolved` with one of the three outcomes. The
+planned `started_at`, `ends_at`, and `duration_seconds` values remain unchanged.
 There is no actual-time tracking or prompt for focused duration.
 
 Blank or invalid outcomes leave the block active and return an error. Skipping
 optional notes, including EOF, keeps the previous notes. With no active block,
-`status` and `stop` report that and exit successfully. Invalid input or database
-errors exit with code 1. Status also displays a deadline-based state (`running`
+`status`, `stop`, and `checkin` report that and exit successfully. Invalid input or
+database errors exit with code 1. Status also displays a deadline-based state (`running`
 or `awaiting check-in`); this is separate from the stored `active`/`resolved` status.
 
 ## Database and manual development reset
@@ -69,6 +91,8 @@ An empty `TIMEBOX_DB` is rejected; unset it to use the default path.
 The schema now includes a nullable `outcome` column. There are no migrations:
 an older database is not upgraded and may report `no such column: outcome`.
 The application never deletes or resets your data.
+Check-in adds no schema changes; a database that already supports `stop` needs
+no reset.
 
 To reset an existing development database manually, close all Timebox processes.
 If you use `TIMEBOX_DB`, export the same value you normally pass to commands in
@@ -109,7 +133,8 @@ bundle exec ruby -Itest -e 'Dir["test/**/*_test.rb"].sort.each { |file| require 
 
 Tests use temporary databases, clean them up afterward, and do not use your
 personal database. They cover parsing, note validation, deadline boundaries,
-persistence, outcomes, planned-time preservation, and conflicting updates.
+persistence, outcomes, check-in actions, planned-time preservation, rollback,
+and conflicting updates.
 
-`checkin`, background notifications, analytics, actual-time tracking, and database
+Background notifications, analytics, actual-time tracking, and database
 migrations are not implemented.

@@ -199,7 +199,7 @@ class CLITest < Minitest::Test
     # SQLite cannot use a directory as its database file.
     @path = @directory
 
-    ["start", "status", "stop"].each do |command|
+    ["start", "status", "stop", "checkin"].each do |command|
       output, error, status = run_cli(command)
 
       assert_equal 1, status.exitstatus
@@ -436,7 +436,7 @@ class CLITest < Minitest::Test
   def test_empty_database_configuration_is_rejected_by_every_command
     @path = ""
 
-    ["start", "status", "stop"].each do |command|
+    ["start", "status", "stop", "checkin"].each do |command|
       output, error, status = run_cli(command, input: "Task\n25m\n\n")
 
       assert_equal 1, status.exitstatus
@@ -464,7 +464,7 @@ class CLITest < Minitest::Test
     end
     before = File.binread(@path)
 
-    ["start", "status", "stop"].each do |command|
+    ["start", "status", "stop", "checkin"].each do |command|
       output, error, status = run_cli(command)
 
       assert_equal 1, status.exitstatus

@@ -86,12 +86,7 @@ module Timebox
 
     # Return true if this active block was resolved; nil notes keep existing notes.
     def resolve(id:, outcome:, notes: nil)
-      unless OUTCOMES.include?(outcome)
-        raise ArgumentError, "Outcome must be completed, partial, or incomplete"
-      end
-      unless notes.nil? || notes.is_a?(String)
-        raise ArgumentError, "Notes must be a string"
-      end
+      validate_resolution(outcome: outcome, notes: notes)
 
       sql = <<~SQL
         UPDATE time_blocks
@@ -103,9 +98,45 @@ module Timebox
       @db.changes == 1
     end
 
+    # Resolve a due block and optionally save its successor as one transaction.
+    def checkin(id:, outcome:, notes: nil, next_block: nil, now: Time.now)
+      validate_resolution(outcome: outcome, notes: notes)
+      unless next_block.nil? || next_block.is_a?(FocusBlock)
+        raise ArgumentError, "Next block must be a FocusBlock"
+      end
+
+      @db.transaction(:immediate)
+      begin
+        due = @db.get_first_row(
+          "SELECT id FROM time_blocks WHERE id = ? AND status = 'active' AND ends_at <= ?",
+          [id, now.to_i]
+        )
+        resolved = false
+        if due
+          resolved = resolve(id: id, outcome: outcome, notes: notes)
+          save(next_block) if resolved && next_block
+        end
+        @db.commit
+        resolved
+      ensure
+        @db.rollback if @db.transaction_active?
+      end
+    end
+
     # Close the database connection.
     def close
       @db.close unless @db.closed?
+    end
+
+    private
+
+    def validate_resolution(outcome:, notes:)
+      unless OUTCOMES.include?(outcome)
+        raise ArgumentError, "Outcome must be completed, partial, or incomplete"
+      end
+      unless notes.nil? || notes.is_a?(String)
+        raise ArgumentError, "Notes must be a string"
+      end
     end
   end
 end

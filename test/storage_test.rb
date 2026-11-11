@@ -271,6 +271,110 @@ class StorageTest < Minitest::Test
     end
   end
 
+  def test_checkin_accepts_the_exact_deadline_but_not_an_early_call
+    id = @storage.save(@block)
+    before = read_block(id)
+
+    refute @storage.checkin(id: id, outcome: "completed", now: @block.ends_at - 1)
+    assert_equal before, read_block(id)
+    assert @storage.checkin(id: id, outcome: "completed", now: @block.ends_at)
+    assert_equal before.merge("status" => "resolved", "outcome" => "completed"), read_block(id)
+    assert_nil @storage.current_block
+  end
+
+  def test_checkin_resolves_and_starts_a_separate_block
+    id = @storage.save(@block)
+    before = read_block(id)
+    successor = Timebox::FocusBlock.new(task: "Next task", duration_seconds: 900)
+
+    assert @storage.checkin(
+      id: id, outcome: "partial", next_block: successor, now: @block.ends_at
+    )
+
+    assert_equal before.merge("status" => "resolved", "outcome" => "partial"), read_block(id)
+    current = @storage.current_block
+    refute_equal id, current["id"]
+    assert_equal "Next task", current["task"]
+    assert_equal 900, current["duration_seconds"]
+    assert_nil current["outcome"]
+  end
+
+  def test_checkin_rolls_back_resolution_when_saving_the_next_block_fails
+    id = @storage.save(@block)
+    before = read_block(id)
+    successor = Timebox::FocusBlock.new(task: "Next task", duration_seconds: 900)
+    with_database do |database|
+      database.execute_batch(<<~SQL)
+        CREATE TRIGGER reject_successor BEFORE INSERT ON time_blocks
+        BEGIN
+          SELECT RAISE(ABORT, 'forced successor failure');
+        END;
+      SQL
+    end
+
+    assert_raises(SQLite3::ConstraintException) do
+      @storage.checkin(
+        id: id, outcome: "partial", notes: "Updated", next_block: successor, now: @block.ends_at
+      )
+    end
+    assert_equal before, @storage.current_block
+    count = with_database { |database| database.get_first_value("SELECT COUNT(*) FROM time_blocks") }
+    assert_equal 1, count
+  end
+
+  def test_checkin_rolls_back_if_interrupted_after_inserting_the_next_block
+    id = @storage.save(@block)
+    before = read_block(id)
+    successor = Timebox::FocusBlock.new(task: "Next task", duration_seconds: 900)
+    interrupted_storage = Class.new(Timebox::Storage) do
+      def save(block)
+        super
+        raise Interrupt, "Simulated interruption"
+      end
+    end.new(path: @path)
+
+    assert_raises(Interrupt) do
+      interrupted_storage.checkin(
+        id: id, outcome: "completed", next_block: successor, now: @block.ends_at
+      )
+    end
+    assert_equal before, @storage.current_block
+    count = with_database { |database| database.get_first_value("SELECT COUNT(*) FROM time_blocks") }
+    assert_equal 1, count
+  ensure
+    interrupted_storage&.close
+  end
+
+  def test_stale_checkin_does_not_resolve_or_replace_a_new_block
+    id = @storage.save(@block)
+    @storage.resolve(id: id, outcome: "completed")
+    resolved = read_block(id)
+    new_id = @storage.save(@block)
+    current = @storage.current_block
+    successor = Timebox::FocusBlock.new(task: "Stale successor", duration_seconds: 900)
+
+    refute @storage.checkin(
+      id: id, outcome: "incomplete", notes: "Stale", next_block: successor, now: @block.ends_at
+    )
+    assert_equal resolved, read_block(id)
+    assert_equal current, @storage.current_block
+    assert_equal new_id, @storage.current_block["id"]
+  end
+
+  def test_checkin_rejects_invalid_values_without_changing_the_block
+    id = @storage.save(@block)
+    before = read_block(id)
+
+    assert_raises(ArgumentError) { @storage.checkin(id: id, outcome: "done", now: @block.ends_at) }
+    assert_raises(ArgumentError) do
+      @storage.checkin(id: id, outcome: "completed", notes: 25, now: @block.ends_at)
+    end
+    assert_raises(ArgumentError) do
+      @storage.checkin(id: id, outcome: "completed", next_block: "invalid", now: @block.ends_at)
+    end
+    assert_equal before, @storage.current_block
+  end
+
   private
 
   def read_block(id)
