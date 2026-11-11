@@ -47,7 +47,7 @@ module Timebox
 
       @notified_ids[id] = true
       unless @notifier.notify
-        @error.puts "Warning: macOS notification failed. Continuing with check-in."
+        @error.puts "Warning: macOS dialog failed. Continuing with check-in."
       end
     end
   end

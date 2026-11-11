@@ -5,7 +5,7 @@ Tasks, notes, and history stay in a local SQLite database.
 
 ## Setup
 
-Use Ruby 4.0 (tested with 4.0.9) and Bundler 4.0.23, as recorded in `Gemfile.lock`.
+Use Ruby 4.0 (tested with 4.0.9). The lockfile records Bundler 4.0.23.
 The macOS system Ruby 2.6 cannot run the locked dependencies. From the repo root:
 
 ```sh
@@ -56,27 +56,40 @@ Every continuation, switch, or break creates a separate block starting when you
 answer the prompts. The previous block's planned times remain unchanged. Timed
 breaks use the same block structure and are identified by the task name `Break`.
 
-## Foreground timer and macOS notifications
+## Foreground timer and macOS dialog
 
 After `start`, Timebox keeps running and displays `Remaining: MM:SS`. It reads the
-stored `ends_at` each second. At the deadline, it sends a native macOS notification
-with the Glass sound through `/usr/bin/osascript`, then opens the check-in prompts
-in the same terminal. Continue, switch, and timed break automatically start the
-next countdown. A manual `checkin` also runs the countdown for any next block.
+stored `ends_at` each second. At the deadline, `/usr/bin/afplay` plays the built-in
+Glass sound, then `/usr/bin/osascript` brings up a native dialog titled **Timebox**:
 
-**Keep the terminal open for notifications.** There is no background service.
-After computer sleep, an overdue timer notifies when the running process resumes.
-Closing the terminal stops notifications but preserves the session in SQLite.
+> Your focus session has ended. Return to Timebox to check in.
+
+The dialog has one **OK** button and no automatic timeout. Timebox waits for OK
+before opening check-in in the same terminal. Continue, switch, and timed break
+start the next countdown. A manual `checkin` also runs any next block's countdown.
+
+**Keep the terminal open for the dialog.** There is no background service.
+After computer sleep, an overdue timer shows its dialog when the process resumes.
+Closing the terminal stops reminders but preserves the session in SQLite.
 Ctrl+C returns exit code 130 and leaves any unresolved session saved. Later, use
 `status`, `stop`, or `checkin` (once due); reopening the terminal does not resume a
 countdown automatically. `status` and `stop` can also run in another terminal.
 
-Each running timer attempts one notification per session. A notification failure
-prints a warning and still opens check-in; it does not resolve or discard data.
-macOS notification permissions and Focus settings can suppress banners or sounds.
+Each running timer attempts one dialog per session. If displaying it fails,
+Timebox warns and still opens check-in without discarding session data.
 If another command resolves or replaces the watched block, its countdown stops.
 The timer follows only blocks created by its own command. Choosing `finish`
 exits, even if another terminal starts a new block at the same time.
+
+The dialog requires a logged-in macOS desktop session; it is not suitable for a
+headless/SSH-only session. It uses AppleScript's own dialog, so Notification
+Center permission and Accessibility access are not required. macOS controls its
+screen/Space placement, especially with multiple displays or full-screen apps.
+The sound uses the current audio output; mute, low output volume, or a different
+output device can make it inaudible. A playback failure warns but still shows
+the dialog.
+Clicking OK (or pressing Return) acknowledges the dialog but does not itself
+resolve the block; check-in still happens in the terminal.
 
 All required check-in input is validated before saving. The outcome, optional
 notes update, and any next block are committed together in one transaction. Bad
@@ -162,9 +175,10 @@ personal database. They cover parsing, note validation, deadline boundaries,
 persistence, outcomes, check-in actions, planned-time preservation, rollback,
 and conflicting updates.
 
-Timer tests use fake clocks and notifications, so the suite does not wait for real
-focus durations or send desktop alerts. Signal tests verify that Ctrl+C and a
-terminal hangup leave the saved session intact.
+Timer tests use fake clocks and dialogs, so the suite does not wait for real
+focus durations or show desktop dialogs. They verify check-in waits for
+acknowledgement. Signal tests verify that Ctrl+C and a terminal hangup leave the
+saved session intact.
 
 Background services, analytics, actual-time tracking, and database migrations are
 not implemented.

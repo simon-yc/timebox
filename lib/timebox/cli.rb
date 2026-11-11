@@ -87,7 +87,7 @@ module Timebox
 
       puts "\nFocus block created!"
       print_block(block)
-      puts "Saved locally. Keep this terminal open for notifications; Ctrl+C leaves the block saved."
+      puts "Saved locally. Keep this terminal open for the reminder dialog; Ctrl+C leaves the block saved."
 
       yield id if block_given?
       0

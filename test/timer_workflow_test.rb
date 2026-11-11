@@ -80,16 +80,53 @@ class TimerWorkflowTest < Minitest::Test
     assert_equal ["resolved", "resolved"], records.map { |record| record["status"] }
   end
 
-  def test_notification_failure_still_enters_checkin
+  def test_dialog_failure_still_enters_checkin
     @notifier.result = false
 
     output, error, code = run_with_timer("start", "Task\n1m\n\ncompleted\n\nfinish\n")
 
     assert_equal 0, code
-    assert_includes error, "macOS notification failed"
+    assert_includes error, "macOS dialog failed"
     assert_includes output, "Checking in: Task"
     assert_equal 1, @notifier.calls
     assert_equal "completed", records.last["outcome"]
+  end
+
+  def test_checkin_waits_for_dialog_acknowledgement
+    dialog_open = Queue.new
+    acknowledged = Queue.new
+    checkins = Queue.new
+    @notifier.on_notify = lambda do
+      dialog_open << true
+      acknowledged.pop
+    end
+    @cli = Class.new(Timebox::CLI)
+    @cli.define_singleton_method(:checkin) do |**options, &on_saved|
+      checkins << true
+      super(**options, &on_saved)
+    end
+    worker = Thread.new do
+      run_with_timer("start", "Task\n1m\n\ncompleted\n\nfinish\n")
+    end
+
+    Timeout.timeout(5) { dialog_open.pop }
+    assert worker.alive?
+    assert checkins.empty?, "Check-in started before acknowledging the dialog"
+    assert_equal "active", records.last["status"]
+    assert_nil records.last["outcome"]
+
+    acknowledged << true
+    output, error, code = Timeout.timeout(5) { worker.value }
+    assert_equal 0, code
+    assert_empty error
+    assert_includes output, "Checking in: Task"
+    assert_equal 1, checkins.size
+    assert_equal "resolved", records.last["status"]
+    assert_equal "completed", records.last["outcome"]
+  ensure
+    acknowledged << true if acknowledged
+    worker&.kill if worker&.alive?
+    worker&.join
   end
 
   def test_start_does_not_watch_a_session_replaced_before_the_first_countdown
