@@ -11,6 +11,7 @@ module Timebox
         help     Show this help
         start    Create and save a focus block
         status   Show the saved block and time remaining
+        stop     Resolve the active block with an outcome
     TEXT
 
     ACTIVE_BLOCK_ERROR = "A focus block is already active. Run the status command to view it."
@@ -26,6 +27,8 @@ module Timebox
         start
       when "status"
         status
+      when "stop"
+        stop
       else
         warn "Unknown command: #{command}"
         1
@@ -97,12 +100,57 @@ module Timebox
       puts "Task: #{block['task']}"
       puts "Notes: #{block['notes']}" unless block["notes"].empty?
       puts "Duration: #{block['duration_seconds'] / 60} minutes"
+      puts "Status: #{block['status']}"
       puts "Started: #{Time.at(block['started_at']).strftime('%Y-%m-%d %I:%M %p %Z')}"
       puts "Ends: #{Time.at(block['ends_at']).strftime('%Y-%m-%d %I:%M %p %Z')}"
       puts "State: #{state}"
       puts "Remaining: #{remaining / 60}m #{remaining % 60}s"
 
       0
+    ensure
+      storage&.close
+    end
+
+    def self.stop
+      storage = Storage.new
+      block = storage.current_block
+
+      unless block
+        puts "No active focus block."
+        return 0
+      end
+
+      puts "Stopping: #{block['task']}"
+      puts "1. completed — Accomplished the intended task."
+      puts "2. partial — Made progress but didn't finish."
+      puts "3. incomplete — Made little or no meaningful progress."
+      print "Outcome (1-3 or name): "
+      selection = $stdin.gets&.strip
+      choices = { "1" => "completed", "2" => "partial", "3" => "incomplete" }
+      outcome = choices.fetch(selection, selection)
+
+      unless Storage::OUTCOMES.include?(outcome)
+        raise ArgumentError, "Select completed, partial, or incomplete (1-3)"
+      end
+
+      print "Update notes (optional; Enter keeps existing): "
+      notes = $stdin.gets&.strip
+      notes = nil if notes&.empty?
+
+      unless storage.resolve(id: block["id"], outcome: outcome, notes: notes)
+        warn "Error: This focus block is no longer active. Run status to view the current block."
+        return 1
+      end
+
+      puts "\nFocus block resolved!"
+      puts "Status: resolved"
+      puts "Outcome: #{outcome}"
+      final_notes = notes || block["notes"]
+      puts "Notes: #{final_notes}" unless final_notes.empty?
+      0
+    rescue ArgumentError => error
+      warn "Error: #{error.message}"
+      1
     ensure
       storage&.close
     end

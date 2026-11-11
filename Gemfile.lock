@@ -32,8 +32,8 @@ DEPENDENCIES
   sqlite3 (~> 2.10.2)
 
 CHECKSUMS
-  minitest (6.0.0)
-  prism (1.8.2)
+  minitest (6.0.0) sha256=4ca597fc1d735ea18d2b4b98c5fb1d5a6da4a6f35ddf32bd5fa3eded33a453be
+  prism (1.8.2) sha256=de088096c9a0e1f298edf2b2a84740ed54d56b5d60b88536f40831599d1116ef
   sqlite3 (2.10.2-aarch64-linux-gnu) sha256=e9aea2c2b3476fc875dd8a89313a9a2862818519c0186bfb5b56d6f57bb08d98
   sqlite3 (2.10.2-aarch64-linux-musl) sha256=4986fc40cdf21342362b72a941df28e95cfe0e644f3ad2532d948b157c39dbee
   sqlite3 (2.10.2-arm-linux-gnu) sha256=762f609ef891463226b472d3df66aea84d5466ff4376d3ccf4a059718c4ce9c9

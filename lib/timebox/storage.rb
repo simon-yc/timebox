@@ -5,11 +5,17 @@ require "fileutils"
 
 module Timebox
   class Storage
+    OUTCOMES = ["completed", "partial", "incomplete"].freeze
+
     DEFAULT_PATH = File.join(
       Dir.home, ".local", "share", "timebox", "timebox.sqlite3"
     )
 
     def initialize(path: ENV.fetch("TIMEBOX_DB", DEFAULT_PATH))
+      if path == ""
+        raise SQLite3::CantOpenException, "Database path is empty. Set TIMEBOX_DB to a path or unset it."
+      end
+
       # Create the database directory if necessary.
       FileUtils.mkdir_p(File.dirname(path))
 
@@ -28,12 +34,21 @@ module Timebox
           started_at INTEGER NOT NULL,
           ends_at INTEGER NOT NULL,
           status TEXT NOT NULL DEFAULT 'active'
+            CHECK (status IN ('active', 'resolved')),
+          outcome TEXT CHECK (outcome IN ('completed', 'partial', 'incomplete')),
+          CHECK (
+            (status = 'active' AND outcome IS NULL) OR
+            (status = 'resolved' AND outcome IS NOT NULL)
+          )
         );
 
         CREATE UNIQUE INDEX IF NOT EXISTS one_active_time_block
           ON time_blocks(status)
           WHERE status = 'active';
       SQL
+    rescue SQLite3::Exception
+      close if @db
+      raise
     end
 
     # Save a FocusBlock and return its database ID.
@@ -60,13 +75,32 @@ module Timebox
     def current_block
       sql = <<~SQL
         SELECT id, task, notes, duration_seconds,
-               started_at, ends_at, status
+               started_at, ends_at, status, outcome
         FROM time_blocks
         WHERE status = 'active'
         LIMIT 1
       SQL
 
       @db.get_first_row(sql)
+    end
+
+    # Return true if this active block was resolved; nil notes keep existing notes.
+    def resolve(id:, outcome:, notes: nil)
+      unless OUTCOMES.include?(outcome)
+        raise ArgumentError, "Outcome must be completed, partial, or incomplete"
+      end
+      unless notes.nil? || notes.is_a?(String)
+        raise ArgumentError, "Notes must be a string"
+      end
+
+      sql = <<~SQL
+        UPDATE time_blocks
+        SET status = 'resolved', outcome = ?, notes = COALESCE(?, notes)
+        WHERE id = ? AND status = 'active'
+      SQL
+
+      @db.execute(sql, [outcome, notes, id])
+      @db.changes == 1
     end
 
     # Close the database connection.

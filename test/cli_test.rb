@@ -5,6 +5,7 @@ require "open3"
 require "rbconfig"
 require "fileutils"
 require "tmpdir"
+require "timeout"
 
 class CLITest < Minitest::Test
   EXECUTABLE = File.expand_path("../bin/timebox", __dir__)
@@ -198,7 +199,7 @@ class CLITest < Minitest::Test
     # SQLite cannot use a directory as its database file.
     @path = @directory
 
-    ["start", "status"].each do |command|
+    ["start", "status", "stop"].each do |command|
       output, error, status = run_cli(command)
 
       assert_equal 1, status.exitstatus
@@ -229,6 +230,250 @@ class CLITest < Minitest::Test
     refute_includes output, "Focus block created!"
   end
 
+  def test_stop_without_an_active_block
+    output, error, status = run_cli("stop")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_equal "No active focus block.\n", output
+  end
+
+  def test_stop_accepts_all_three_outcomes
+    ["completed", "partial", "incomplete"].each do |outcome|
+      id = save_block
+      before = read_block(id)
+
+      output, error, status = run_cli("stop", input: "#{outcome}\n\n")
+
+      assert_equal 0, status.exitstatus
+      assert_empty error
+      assert_includes output, "Status: resolved\n"
+      assert_includes output, "Outcome: #{outcome}\n"
+      assert_equal before.merge("status" => "resolved", "outcome" => outcome), read_block(id)
+    end
+  end
+
+  def test_stop_accepts_numbered_outcome_choices
+    { "1" => "completed", "2" => "partial", "3" => "incomplete" }.each do |choice, outcome|
+      id = save_block
+
+      _, error, status = run_cli("stop", input: "#{choice}\n\n")
+
+      assert_equal 0, status.exitstatus, error
+      assert_equal outcome, read_block(id)["outcome"]
+    end
+  end
+
+  def test_stop_rejects_invalid_outcomes_without_changing_the_block
+    id = save_block
+    before = read_block(id)
+
+    ["", "4", "done", "Completed"].each do |outcome|
+      output, error, status = run_cli("stop", input: "#{outcome}\n")
+
+      assert_equal 1, status.exitstatus
+      assert_includes error, "Error: Select completed, partial, or incomplete"
+      refute_includes output, "Focus block resolved!"
+      assert_equal before, read_block(id)
+    end
+  end
+
+  def test_stop_handles_eof_before_outcome_without_changing_the_block
+    id = save_block
+    before = read_block(id)
+
+    _, error, status = run_cli("stop")
+
+    assert_equal 1, status.exitstatus
+    assert_includes error, "Error: Select completed, partial, or incomplete"
+    assert_equal before, read_block(id)
+  end
+
+  def test_stop_keeps_notes_when_the_response_is_blank
+    id = save_block(notes: "Keep these notes")
+
+    output, error, status = run_cli("stop", input: "completed\n\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_equal "Keep these notes", read_block(id)["notes"]
+    assert_includes output, "Notes: Keep these notes\n"
+  end
+
+  def test_stop_keeps_notes_when_optional_input_reaches_eof
+    id = save_block(notes: "Keep these notes")
+
+    _, error, status = run_cli("stop", input: "partial\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_equal "Keep these notes", read_block(id)["notes"]
+    assert_equal "partial", read_block(id)["outcome"]
+  end
+
+  def test_stop_updates_notes_without_changing_planned_fields
+    id = save_block(notes: "Original notes")
+    before = read_block(id)
+
+    output, error, status = run_cli("stop", input: "partial\n  Need another pass  \n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_includes output, "Notes: Need another pass\n"
+    assert_equal before.merge(
+      "status" => "resolved", "outcome" => "partial", "notes" => "Need another pass"
+    ), read_block(id)
+  end
+
+  def test_stop_allows_a_new_cli_session_to_start
+    id = save_block
+    _, stop_error, stop_status = run_cli("stop", input: "completed\n\n")
+    assert_equal 0, stop_status.exitstatus, stop_error
+
+    empty_output, _, empty_status = run_cli("status")
+    assert_equal 0, empty_status.exitstatus
+    assert_equal "No active focus block.\n", empty_output
+
+    _, start_error, start_status = run_start("Next task\n1h\nNext notes\n")
+    assert_equal 0, start_status.exitstatus, start_error
+
+    output, error, status = run_cli("status")
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_includes output, "Task: Next task\n"
+    assert_includes output, "Status: active\n"
+    assert_equal "resolved", read_block(id)["status"]
+    assert_equal "completed", read_block(id)["outcome"]
+  end
+
+  def test_stop_resolves_an_overdue_block
+    id = save_block(started_at: Time.now - 3600)
+
+    _, error, status = run_cli("stop", input: "incomplete\n\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_equal "resolved", read_block(id)["status"]
+    assert_equal "incomplete", read_block(id)["outcome"]
+  end
+
+  def test_repeated_stop_preserves_the_resolved_session
+    id = save_block(notes: "Original notes")
+    _, first_error, first_status = run_cli("stop", input: "completed\nFinal notes\n")
+    assert_equal 0, first_status.exitstatus, first_error
+    resolved = read_block(id)
+
+    output, error, status = run_cli("stop", input: "incomplete\nReplacement notes\n")
+
+    assert_equal 0, status.exitstatus
+    assert_empty error
+    assert_equal "No active focus block.\n", output
+    assert_equal resolved, read_block(id)
+  end
+
+  def test_failed_resolution_rolls_back_every_field
+    id = save_block(notes: "Original notes")
+    before = read_block(id)
+    database = SQLite3::Database.new(@path)
+    begin
+      database.execute_batch(<<~SQL)
+        CREATE TRIGGER reject_resolution AFTER UPDATE ON time_blocks
+        BEGIN
+          SELECT RAISE(ABORT, 'forced resolution failure');
+        END;
+      SQL
+    ensure
+      database.close
+    end
+
+    output, error, status = run_cli("stop", input: "partial\nUpdated notes\n")
+
+    assert_equal 1, status.exitstatus
+    assert_match(/\AError: Could not access the database: forced resolution failure\n\z/, error)
+    refute_includes output, "Focus block resolved!"
+    assert_equal before, read_block(id)
+  end
+
+  def test_stale_stop_cannot_overwrite_a_resolved_or_new_session
+    id = save_block(notes: "Original notes")
+    # Unbuffer output in this child so the test can synchronize at the real prompt.
+    wrapper = "$stdout.sync = true; load ARGV.shift"
+    Open3.popen3(
+      { "TIMEBOX_DB" => @path }, RbConfig.ruby, "-e", wrapper, EXECUTABLE, "stop"
+    ) do |input, output, error, child|
+      begin
+        captured = String.new
+        Timeout.timeout(5) do
+          captured << output.readpartial(1024) until captured.include?("Outcome (1-3 or name): ")
+        end
+
+        _, stop_error, stop_status = run_cli("stop", input: "completed\nFirst resolution\n")
+        assert_equal 0, stop_status.exitstatus, stop_error
+        resolved = read_block(id)
+        _, start_error, start_status = run_start("New task\n1h\nNew notes\n")
+        assert_equal 0, start_status.exitstatus, start_error
+
+        input.write("incomplete\nStale notes\n")
+        input.close
+        captured << output.read
+        failure = error.read
+
+        assert_equal 1, child.value.exitstatus
+        assert_match(/\AError: This focus block is no longer active\./, failure)
+        refute_includes captured, "Focus block resolved!"
+        assert_equal resolved, read_block(id)
+        current_output, current_error, current_status = run_cli("status")
+        assert_equal 0, current_status.exitstatus
+        assert_empty current_error
+        assert_includes current_output, "Task: New task\n"
+        assert_includes current_output, "Notes: New notes\n"
+      ensure
+        input.close unless input.closed?
+      end
+    end
+  end
+
+  def test_empty_database_configuration_is_rejected_by_every_command
+    @path = ""
+
+    ["start", "status", "stop"].each do |command|
+      output, error, status = run_cli(command, input: "Task\n25m\n\n")
+
+      assert_equal 1, status.exitstatus
+      assert_match(/\AError: Could not access the database: Database path is empty\./, error)
+      refute_includes output, "Focus block created!"
+    end
+  end
+
+  def test_commands_reject_the_previous_schema_without_changing_existing_data
+    FileUtils.mkdir_p(File.dirname(@path))
+    database = SQLite3::Database.new(@path)
+    begin
+      database.execute_batch(<<~SQL)
+        CREATE TABLE time_blocks (
+          id INTEGER PRIMARY KEY, task TEXT, notes TEXT, duration_seconds INTEGER,
+          started_at INTEGER, ends_at INTEGER, status TEXT
+        );
+        CREATE UNIQUE INDEX one_active_time_block ON time_blocks(status)
+          WHERE status = 'active';
+        INSERT INTO time_blocks VALUES
+          (1, 'Existing task', 'Keep me', 1500, 1000, 2500, 'active');
+      SQL
+    ensure
+      database.close
+    end
+    before = File.binread(@path)
+
+    ["start", "status", "stop"].each do |command|
+      output, error, status = run_cli(command)
+
+      assert_equal 1, status.exitstatus
+      assert_includes error, "no such column: outcome"
+      refute_includes output, "Focus block resolved!"
+      assert_equal before, File.binread(@path)
+    end
+  end
+
   private
 
   # Run the executable so these tests also cover argument handling and exit codes.
@@ -243,14 +488,22 @@ class CLITest < Minitest::Test
     )
   end
 
-  def save_block(started_at: Time.now)
+  def save_block(started_at: Time.now, notes: "")
     storage = Timebox::Storage.new(path: @path)
     block = Timebox::FocusBlock.new(
-      task: "Saved task", duration_seconds: 1500, started_at: started_at
+      task: "Saved task", duration_seconds: 1500, started_at: started_at, notes: notes
     )
     storage.save(block)
   ensure
     storage&.close
+  end
+
+  def read_block(id)
+    database = SQLite3::Database.new(@path)
+    database.results_as_hash = true
+    database.get_first_row("SELECT * FROM time_blocks WHERE id = ?", [id])
+  ensure
+    database&.close
   end
 
   def capture_status_at(now)

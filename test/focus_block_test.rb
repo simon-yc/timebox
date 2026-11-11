@@ -57,6 +57,15 @@ class FocusBlockTest < Minitest::Test
     end
   end
 
+  def test_rejects_invalid_notes_assignments_without_losing_existing_notes
+    @block.notes = "Keep these notes"
+
+    [nil, 25, []].each do |value|
+      assert_raises(ArgumentError) { @block.notes = value }
+      assert_equal "Keep these notes", @block.notes
+    end
+  end
+
   def test_not_expired_before_deadline
     refute @block.expired?(now: @block.ends_at - 1)
   end
